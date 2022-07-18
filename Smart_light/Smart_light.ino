@@ -3,12 +3,7 @@
 #include "WiFiProv.h"
 #include <FastLED.h>
 #include <wifi_provisioning/manager.h>
-
-// Set Default Values
-#define DEFAULT_LIGHT false
-#define DEFAULT_BRIGHTNESS 255
-#define DEFAULT_SATURATION 0
-#define DEFAULT_HUE 255
+#include "configs.h"
 
 // BLE Credentials
 const char *service_name = "PROV_Nanoleaf";
@@ -18,15 +13,9 @@ const char *pop = "1234567";
 #define LED_PIN 26
 static uint8_t gpio_reset = 0;
 bool light_state = false;
-
 bool wifi_connected = 0;
 
 // LED CONFIG
-#define LED_TYPE WS2812
-#define NUM_LEDS 28
-#define COLOR_ORDER GRB
-#define COLOR_TRANSITION_RATE 5
-#define COLOR_TRANSITION_DELAY 10
 CRGB leds[NUM_LEDS];
 
 // INITIAL VALUES
@@ -91,7 +80,7 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
       Serial.printf("Received value = %s for %s - %s\n", val.val.b ? "true" : "false", device_name, param_name);
       FastLED.clear();
       light_state = val.val.b;
-      light_state == true ? setHSVColor(hue, saturation, brightness) : setHSVColor(0, 0, 0);
+      light_state == true ? setHSVColor(hue, saturation, brightness) : setHSVColor(hue, saturation, 0);
       Serial.println(light_state == true ? "Turning on Light" : "Turning off Light");
     }
     else if (strcmp(param_name, "Brightness") == 0)
@@ -217,23 +206,22 @@ void setHSVColor(int targetHue, int targetSat, int targetVal)
   short int currentSat = prevSat;
   short int currentVal = prevVal;
 
-  short int satRate = targetSat >= currentSat ? COLOR_TRANSITION_RATE : COLOR_TRANSITION_RATE * -1;
-  short int valRate = targetVal >= currentVal ? COLOR_TRANSITION_RATE : COLOR_TRANSITION_RATE * -1;
+  short int satDir = targetSat >= currentSat ? COLOR_TRANSITION_RATE : COLOR_TRANSITION_RATE * -1;
+  short int valDir = targetVal >= currentVal ? COLOR_TRANSITION_RATE : COLOR_TRANSITION_RATE * -1;
   
   while (currentHue != targetHue || currentSat != targetSat || currentVal != targetVal)
   {
     currentHue = targetHue;
-    currentSat = currentSat + satRate;
-    currentVal = currentVal + valRate;
+    currentSat = currentSat + satDir;
+    currentVal = currentVal + valDir;
 
-    currentSat = targetSat * satRate > currentSat * satRate ? currentSat : targetSat;
-    currentVal = targetVal * valRate > currentVal * valRate ? currentVal : targetVal;
+    currentSat = targetSat * satDir > currentSat * satDir ? currentSat : targetSat;
+    currentVal = targetVal * valDir > currentVal * valDir ? currentVal : targetVal;
 
     // Serial.printf("Current values: %d, %d, %d\n", currentHue, currentSat, currentVal);
 
     fill_solid(leds, NUM_LEDS, CHSV(currentHue, currentSat, currentVal));
-    FastLED.show();
-    delay(COLOR_TRANSITION_DELAY);
+    FastLED.delay(COLOR_TRANSITION_DELAY);
   }
   Serial.printf("Applied HSV values: %d, %d, %d\n", currentHue, currentSat, currentVal);
   prevHue = currentHue;
