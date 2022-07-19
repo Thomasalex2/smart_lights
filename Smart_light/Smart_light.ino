@@ -1,7 +1,7 @@
+#include <FastLED.h>
 #include "RMaker.h"
 #include "WiFi.h"
 #include "WiFiProv.h"
-#include <FastLED.h>
 #include <wifi_provisioning/manager.h>
 #include "configs.h"
 
@@ -10,7 +10,6 @@ const char *service_name = "PROV_Nanoleaf";
 const char *pop = "1234567";
 
 // GPIO
-#define LED_PIN 26
 static uint8_t gpio_reset = 0;
 bool light_state = false;
 bool wifi_connected = 0;
@@ -19,12 +18,24 @@ bool wifi_connected = 0;
 CRGB leds[NUM_LEDS];
 
 // INITIAL VALUES
-short int brightness = DEFAULT_BRIGHTNESS;
-short int saturation = DEFAULT_SATURATION;
-short int hue = DEFAULT_HUE;
-short int prevHue = DEFAULT_HUE;
-short int prevSat = DEFAULT_SATURATION;
-short int prevVal = DEFAULT_BRIGHTNESS;
+short int appliedHue = DEFAULT_HUE;
+short int appliedSat = DEFAULT_SATURATION;
+short int appliedVal = DEFAULT_BRIGHTNESS;
+bool enable_color_preset = DEFAULT_COLOR_PRESET_SETTING;
+bool motion_detection = DEFAULT_MOTION;
+bool night_motion_detection = DEFAULT_NIGHT_MOTION;
+
+// Initialization Variables
+String color_preset;
+
+// Timing Variables
+unsigned long int detection_time = 0;
+unsigned long int prev_color_cycle_time = 0;
+
+// Flag Variables
+bool motion_flag = false;
+bool night_motion_flag = false;
+bool night_light_state = false;
 
 //------------------------------------------- Declaring Devices -----------------------------------------------------//
 
@@ -71,7 +82,6 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
 {
   const char *device_name = device->getDeviceName();
   const char *param_name = param->getParamName();
-  Serial.println(device_name);
 
   if (strcmp(device_name, "Nanoleaf Light") == 0)
   {
@@ -80,26 +90,42 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
       Serial.printf("Received value = %s for %s - %s\n", val.val.b ? "true" : "false", device_name, param_name);
       FastLED.clear();
       light_state = val.val.b;
-      light_state == true ? setHSVColor(hue, saturation, brightness) : setHSVColor(hue, saturation, 0);
+      light_state == true ? transitionHSVColor(appliedHue, appliedSat, DEFAULT_BRIGHTNESS) : transitionHSVColor(appliedHue, appliedSat, 0);
       Serial.println(light_state == true ? "Turning on Light" : "Turning off Light");
     }
     else if (strcmp(param_name, "Brightness") == 0)
     {
       Serial.printf("Received value = %d for %s - %s\n", val.val.i, device_name, param_name);
-      brightness = map(val.val.i, 0, 100, 0, 255);
-      setHSVColor(hue, saturation, brightness);
+      int newVal = map(val.val.i, 0, 100, 0, 255);
+      transitionHSVColor(appliedHue, appliedSat, newVal);
     }
     else if (strcmp(param_name, "Hue") == 0)
     {
       Serial.printf("Received value = %d for %s - %s\n", val.val.i, device_name, param_name);
-      hue = map(val.val.i, 0, 360, 0, 255);
-      setHSVColor(hue, saturation, brightness);
+      int newHue = map(val.val.i, 0, 360, 0, 255);
+      transitionHSVColor(newHue, appliedSat, appliedVal);
     }
     else if (strcmp(param_name, "Saturation") == 0)
     {
       Serial.printf("Received value = %d for %s - %s\n", val.val.i, device_name, param_name);
-      saturation = map(val.val.i, 0, 100, 0, 255);
-      setHSVColor(hue, saturation, brightness);
+      int newSat = map(val.val.i, 0, 100, 0, 255);
+      transitionHSVColor(appliedHue, newSat, appliedVal);
+    }
+    else if (strcmp(param_name, "Colour Presets") == 0)
+    {
+      color_preset = val.val.s;
+      enable_color_preset = color_preset == "Custom" ? false : true;
+      Serial.printf("\nReceived value = %s for %s - %s - set to %d\n", val.val.s, device_name, param_name, enable_color_preset);
+    }
+    else if (strcmp(param_name, "Motion Awareness") == 0)
+    {
+      motion_detection = val.val.b;
+      Serial.println(motion_detection == true ? "Turning on Motion Awareness" : "Turning off Motion Awareness");
+    }
+    else if (strcmp(param_name, "Night Motion Detection") == 0)
+    {
+      night_motion_detection = val.val.b;
+      Serial.println(night_motion_detection == true ? "Turning on Night Motion Awareness" : "Turning off Night Motion Awareness");
     }
     param->updateAndReport(val);
   }
@@ -110,7 +136,7 @@ void setup()
 {
   // Configure the input GPIOs
   pinMode(gpio_reset, INPUT);
-  pinMode(LED_PIN, INPUT);
+  pinMode(MOTION_PIN, INPUT);
 
   initWS2812();
   Serial.begin(115200);
@@ -118,6 +144,12 @@ void setup()
   //------------------------------------------- Declaring Node -----------------------------------------------------//
   Node my_node;
   my_node = RMaker.initNode("Nanoleaf");
+
+  static const char *colorPresetModes[] = {"Custom", "Rainbow"};
+  Param colorPresets("Colour Presets", ESP_RMAKER_PARAM_MODE, value("Custom"), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  colorPresets.addValidStrList(colorPresetModes, 2);
+  colorPresets.addUIType(ESP_RMAKER_UI_DROPDOWN);
+  ws2812.addParam(colorPresets);
 
   Param hueParam("Hue", "esp.param.hue", value((int)DEFAULT_HUE), PROP_FLAG_READ | PROP_FLAG_WRITE);
   hueParam.addBounds(value(0), value(360), value(1));
@@ -133,6 +165,14 @@ void setup()
   brightnessParam.addBounds(value(0), value(100), value(1));
   brightnessParam.addUIType(ESP_RMAKER_UI_SLIDER);
   ws2812.addParam(brightnessParam);
+
+  Param motionParam("Motion Awareness", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  motionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
+  ws2812.addParam(motionParam);
+
+  Param nightMotionParam("Night Motion Detection", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  nightMotionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
+  ws2812.addParam(nightMotionParam);
 
   //Standard switch device
   ws2812.addCb(write_callback);
@@ -166,8 +206,17 @@ void setup()
 
 void loop()
 {
-  //-----------------------------------------------------------  Logic to Reset RainMaker
+  if (motion_detection) {
+    checkForMotion();
+  }
+  if (night_motion_detection) {
+    checkForNightMotion();
+  }
+  if (enable_color_preset) {
+    checkColorPresets();
+  }
 
+  //----------------------------------- Logic to Reset RainMaker
   // Read GPIO0 (external button to reset device
   if (digitalRead(gpio_reset) == LOW) { //Push button pressed
     Serial.printf("Reset Button Pressed!\n");
@@ -200,11 +249,20 @@ void initWS2812()
   FastLED.show();
 }
 
-void setHSVColor(int targetHue, int targetSat, int targetVal)
+void changeHSVcolor(int hue, int sat, int val)
 {
-  short int currentHue = prevHue;
-  short int currentSat = prevSat;
-  short int currentVal = prevVal;
+  fill_solid(leds, NUM_LEDS, CHSV(hue, sat, val));
+  FastLED.show();
+  appliedHue = hue;
+  appliedSat = sat;
+  appliedVal = val;
+}
+
+void transitionHSVColor(int targetHue, int targetSat, int targetVal)
+{
+  short int currentHue = appliedHue;
+  short int currentSat = appliedSat;
+  short int currentVal = appliedVal;
 
   short int satDir = targetSat >= currentSat ? COLOR_TRANSITION_RATE : COLOR_TRANSITION_RATE * -1;
   short int valDir = targetVal >= currentVal ? COLOR_TRANSITION_RATE : COLOR_TRANSITION_RATE * -1;
@@ -220,33 +278,64 @@ void setHSVColor(int targetHue, int targetSat, int targetVal)
 
     // Serial.printf("Current values: %d, %d, %d\n", currentHue, currentSat, currentVal);
 
-    fill_solid(leds, NUM_LEDS, CHSV(currentHue, currentSat, currentVal));
+    changeHSVcolor(currentHue, currentSat, currentVal);
     FastLED.delay(COLOR_TRANSITION_DELAY);
   }
   Serial.printf("Applied HSV values: %d, %d, %d\n", currentHue, currentSat, currentVal);
-  prevHue = currentHue;
-  prevSat = currentSat;
-  prevVal = currentVal;
 }
 
-//void setHSVColor(int targetHue, int targetSat, int targetVal)
-//{
-//  static uint8_t k;
-//  CHSV startColor = CHSV(prevHue, prevSat, prevVal);
-//  CHSV targetColor = CHSV(targetHue, targetSat, targetVal);
-//  CHSV currentColor;
-//  
-//  while (startColor != targetColor)
-//  {
-//    currentColor = blend(startColor, targetColor, k, SHORTEST_HUES);
-//    fill_solid(leds, NUM_LEDS, currentColor);
-//    k++;
-//    FastLED.show();
-//    Serial.printf("Current values: %d, %d, %d\n", currentColor.h, currentColor.s, currentColor.v);
-//    delay(COLOR_TRANSITION_DELAY);
-//  }
-//  Serial.printf("Applied HSV values: %d, %d, %d\n", currentColor.h, currentColor.s, currentColor.v);
-//  prevHue = currentColor.h;
-//  prevSat = currentColor.s;
-//  prevVal = currentColor.v;
-//}
+void checkColorPresets() 
+{
+  if (millis() - prev_color_cycle_time >= DEFAULT_COLOR_CYCLE_TIME)
+  {
+    if (color_preset == "Rainbow")
+    {
+      uint8_t newHue = appliedHue + 1;
+      changeHSVcolor(newHue, appliedSat, appliedVal);
+      prev_color_cycle_time = millis();
+    }
+  }
+}
+
+
+void checkForMotion() {
+  
+  if (digitalRead(MOTION_PIN))
+  {
+    if(!motion_flag)
+    {
+      Serial.println("Motion detected");
+      short int prevHue = appliedHue;
+      short int newHue = appliedHue + MOTION_AWARENESS_COLOR_SHIFT;
+      Serial.printf("Changing Hue: %d -> %d\n", prevHue, newHue);
+      changeHSVcolor(newHue, appliedSat, appliedVal);
+      FastLED.delay(DEFAULT_MOTION_AWARENESS_PERIOD);
+      changeHSVcolor(prevHue, appliedSat, appliedVal);
+      motion_flag = true;
+    }
+  }
+  else {
+    motion_flag = false;
+  }
+}
+
+void checkForNightMotion()
+{
+  if (digitalRead(MOTION_PIN) && !night_motion_flag && !light_state)
+  {
+    Serial.println("Motion detected");
+    transitionHSVColor(appliedHue, appliedSat, NIGHT_MOTION_BRIGHTNESS);
+    night_motion_flag = true;
+    night_light_state = true;
+    detection_time = millis();
+  }
+  else
+  {
+    night_motion_flag = false;
+    if (millis() - detection_time > NIGHT_MOTION_TIMEOUT && !light_state && night_light_state)
+    {
+      transitionHSVColor(appliedHue, appliedSat, 0);
+      night_light_state = false;
+    } 
+  }
+}
