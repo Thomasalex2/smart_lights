@@ -1,9 +1,11 @@
 // Set Light Values
 #define LED_PIN 26
-#define DEFAULT_LIGHT false
+#define DEFAULT_LIGHT true
 #define DEFAULT_BRIGHTNESS 255
 #define DEFAULT_SATURATION 0
 #define DEFAULT_HUE 255
+#define LED_VOLTS 5
+#define LED_MAX_AMPS 1500
 
 // LED CONFIG
 #define LED_TYPE WS2812
@@ -13,6 +15,7 @@
 #define COLOR_TRANSITION_DELAY 15
 #define DEFAULT_COLOR_PRESET_SETTING false
 #define DEFAULT_COLOR_CYCLE_TIME 100
+#define BLEND_RATE 5
 
 // Motion Detectors Configuration
 #define MOTION_PIN 27

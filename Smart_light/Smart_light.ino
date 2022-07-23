@@ -36,6 +36,11 @@ unsigned long int prev_color_cycle_time = 0;
 bool motion_flag = false;
 bool night_motion_flag = false;
 bool night_light_state = false;
+bool init_required = false;
+
+CHSV colorCurrent;
+CHSV colorStart;
+CHSV colorTarget;
 
 //------------------------------------------- Declaring Devices -----------------------------------------------------//
 
@@ -115,6 +120,9 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
     {
       color_preset = val.val.s;
       enable_color_preset = color_preset == "Custom" ? false : true;
+      if (color_preset == "Random Blend") {
+          bool init_required = true;
+      }
       Serial.printf("\nReceived value = %s for %s - %s - set to %d\n", val.val.s, device_name, param_name, enable_color_preset);
     }
     else if (strcmp(param_name, "Motion Awareness") == 0)
@@ -145,9 +153,9 @@ void setup()
   Node my_node;
   my_node = RMaker.initNode("Nanoleaf");
 
-  static const char *colorPresetModes[] = {"Custom", "Rainbow"};
+  static const char *colorPresetModes[] = {"Custom", "Rainbow", "Random Blend"};
   Param colorPresets("Colour Presets", ESP_RMAKER_PARAM_MODE, value("Custom"), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  colorPresets.addValidStrList(colorPresetModes, 2);
+  colorPresets.addValidStrList(colorPresetModes, 3);
   colorPresets.addUIType(ESP_RMAKER_UI_DROPDOWN);
   ws2812.addParam(colorPresets);
 
@@ -244,8 +252,12 @@ void loop()
 void initWS2812() 
 {
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
+  FastLED.setMaxPowerInVoltsAndMilliamps(LED_VOLTS, LED_MAX_AMPS);
   FastLED.clear();
+  if (DEFAULT_LIGHT)
+  {
+    fill_solid(leds, NUM_LEDS, CHSV(appliedHue, appliedSat, appliedVal));
+  }
   FastLED.show();
 }
 
@@ -284,6 +296,45 @@ void transitionHSVColor(int targetHue, int targetSat, int targetVal)
   Serial.printf("Applied HSV values: %d, %d, %d\n", currentHue, currentSat, currentVal);
 }
 
+void initColorTransition()
+{
+  CHSV colorStart = CHSV(appliedHue, appliedSat, appliedVal);   // starting color
+  CHSV colorTarget = CHSV(random8(), 255, 255);                 // target color
+  colorCurrent = colorStart;
+}
+
+
+void animateColorTransition() 
+{
+  EVERY_N_MILLISECONDS(BLEND_RATE)
+  {
+    static uint8_t k; // the amount to blend [0-255]
+    if (colorCurrent.h == colorTarget.h)
+    { // Check if target has been reached
+      colorStart = colorCurrent;
+      colorTarget = CHSV(random8(), 255, appliedVal); // new target to transition toward
+      k = 0;                                   // reset k value
+      Serial.print("New colorTarget:\t\t\t");
+      Serial.println(colorTarget.h);
+    }
+
+    colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
+    fill_solid(leds, NUM_LEDS, colorCurrent);
+    // leds[0] = colorTarget; // set first pixel to always show target color
+    Serial.print("colorCurrent:\t");
+    Serial.print(colorCurrent.h);
+    Serial.print("\t");
+    Serial.print("colorTarget:\t");
+    Serial.print(colorTarget.h);
+    Serial.print("\tk: ");
+    Serial.println(k);
+    k++;
+  }
+
+  FastLED.show(); // update the display
+}
+
+
 void checkColorPresets() 
 {
   if (millis() - prev_color_cycle_time >= DEFAULT_COLOR_CYCLE_TIME)
@@ -293,6 +344,14 @@ void checkColorPresets()
       uint8_t newHue = appliedHue + 1;
       changeHSVcolor(newHue, appliedSat, appliedVal);
       prev_color_cycle_time = millis();
+    }
+    else if (color_preset == "Random Blend")
+    {
+      if (init_required){
+        initColorTransition();
+        init_required = false;
+      }
+      animateColorTransition();
     }
   }
 }
