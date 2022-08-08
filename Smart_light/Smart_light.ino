@@ -6,8 +6,8 @@
 #include "configs.h"
 
 // BLE Credentials
-const char *service_name = "PROV_Nanoleaf";
-const char *pop = "1234567";
+const char *service_name = "PROV_" DEVICE_NAME;
+const char *pop = PROV_PASSWORD;
 
 // GPIO
 static uint8_t gpio_reset = 0;
@@ -18,25 +18,25 @@ bool wifi_connected = 0;
 CRGB leds[NUM_LEDS];
 
 // INITIAL VALUES
-short int appliedHue = DEFAULT_HUE;
-short int appliedSat = DEFAULT_SATURATION;
-short int appliedVal = DEFAULT_BRIGHTNESS;
-bool enable_color_preset = DEFAULT_COLOR_PRESET_SETTING;
+uint8_t appliedHue = DEFAULT_HUE;
+uint8_t appliedSat = DEFAULT_SATURATION;
+uint8_t appliedVal = DEFAULT_BRIGHTNESS;
+uint8_t brightnessBeforeTurnOff = DEFAULT_BRIGHTNESS;
 bool motion_detection = DEFAULT_MOTION;
 bool night_motion_detection = DEFAULT_NIGHT_MOTION;
 
 // Initialization Variables
-String color_preset;
+String color_preset = DEFAULT_COLOR_PRESET;
 
 // Timing Variables
 unsigned long int detection_time = 0;
 unsigned long int prev_color_cycle_time = 0;
+unsigned long int signal_rep_time = 0;
 
 // Flag Variables
 bool motion_flag = false;
 bool night_motion_flag = false;
 bool night_light_state = false;
-bool init_required = false;
 
 CHSV colorCurrent;
 CHSV colorStart;
@@ -45,7 +45,7 @@ CHSV colorTarget;
 //------------------------------------------- Declaring Devices -----------------------------------------------------//
 
 // The framework provides some standard device types like switch, lightbulb, fan, temperature sensor.
-static LightBulb ws2812("Nanoleaf Light");
+static LightBulb ws2812(RGB_LIGHTS);
 
 void sysProvEvent(arduino_event_t *sys_event)
 {
@@ -82,48 +82,51 @@ void sysProvEvent(arduino_event_t *sys_event)
   }
 }
 
-
 void write_callback(Device *device, Param *param, const param_val_t val, void *priv_data, write_ctx_t *ctx)
 {
   const char *device_name = device->getDeviceName();
   const char *param_name = param->getParamName();
 
-  if (strcmp(device_name, "Nanoleaf Light") == 0)
+  if (strcmp(device_name, RGB_LIGHTS) == 0)
   {
     if (strcmp(param_name, "Power") == 0)
     {
       Serial.printf("Received value = %s for %s - %s\n", val.val.b ? "true" : "false", device_name, param_name);
-      FastLED.clear();
       light_state = val.val.b;
-      light_state == true ? transitionHSVColor(appliedHue, appliedSat, DEFAULT_BRIGHTNESS) : transitionHSVColor(appliedHue, appliedSat, 0);
-      Serial.println(light_state == true ? "Turning on Light" : "Turning off Light");
+      if (light_state)
+      {
+        transitionHSVColor(appliedHue, appliedSat, brightnessBeforeTurnOff);
+        Serial.println("Turning on " DEVICE_NAME);
+      } 
+      else 
+      {
+        brightnessBeforeTurnOff = appliedVal;
+        transitionHSVColor(appliedHue, appliedSat, 0);
+        Serial.println("Turning off " DEVICE_NAME);
+      }
     }
     else if (strcmp(param_name, "Brightness") == 0)
     {
       Serial.printf("Received value = %d for %s - %s\n", val.val.i, device_name, param_name);
-      int newVal = map(val.val.i, 0, 100, 0, 255);
+      uint8_t newVal = map(val.val.i, 0, 100, 0, 255);
       transitionHSVColor(appliedHue, appliedSat, newVal);
     }
     else if (strcmp(param_name, "Hue") == 0)
     {
       Serial.printf("Received value = %d for %s - %s\n", val.val.i, device_name, param_name);
-      int newHue = map(val.val.i, 0, 360, 0, 255);
+      uint8_t newHue = map(val.val.i, 0, 360, 0, 255);
       transitionHSVColor(newHue, appliedSat, appliedVal);
     }
     else if (strcmp(param_name, "Saturation") == 0)
     {
       Serial.printf("Received value = %d for %s - %s\n", val.val.i, device_name, param_name);
-      int newSat = map(val.val.i, 0, 100, 0, 255);
+      uint8_t newSat = map(val.val.i, 0, 100, 0, 255);
       transitionHSVColor(appliedHue, newSat, appliedVal);
     }
     else if (strcmp(param_name, "Colour Presets") == 0)
     {
       color_preset = val.val.s;
-      enable_color_preset = color_preset == "Custom" ? false : true;
-      if (color_preset == "Random Blend") {
-          bool init_required = true;
-      }
-      Serial.printf("\nReceived value = %s for %s - %s - set to %d\n", val.val.s, device_name, param_name, enable_color_preset);
+      Serial.printf("\nReceived value = %s for %s - %s\n", val.val.s, device_name, param_name);
     }
     else if (strcmp(param_name, "Motion Awareness") == 0)
     {
@@ -139,7 +142,6 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
   }
 }
 
-
 void setup()
 {
   // Configure the input GPIOs
@@ -153,23 +155,23 @@ void setup()
   Node my_node;
   my_node = RMaker.initNode("Nanoleaf");
 
-  static const char *colorPresetModes[] = {"Custom", "Rainbow", "Random Blend"};
+  static const char *colorPresetModes[] = {"Custom", "Cycle"};
   Param colorPresets("Colour Presets", ESP_RMAKER_PARAM_MODE, value("Custom"), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  colorPresets.addValidStrList(colorPresetModes, 3);
+  colorPresets.addValidStrList(colorPresetModes, 2);
   colorPresets.addUIType(ESP_RMAKER_UI_DROPDOWN);
   ws2812.addParam(colorPresets);
 
-  Param hueParam("Hue", "esp.param.hue", value((int)DEFAULT_HUE), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  Param hueParam("Hue", "esp.param.hue", value((int)map(DEFAULT_HUE, 0, 255, 0, 360)), PROP_FLAG_READ | PROP_FLAG_WRITE);
   hueParam.addBounds(value(0), value(360), value(1));
   hueParam.addUIType(ESP_RMAKER_UI_HUE_CIRCLE);
   ws2812.addParam(hueParam);
 
-  Param saturationParam("Saturation", "esp.param.saturation", value((int)DEFAULT_SATURATION), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  Param saturationParam("Saturation", "esp.param.saturation", value((int)map(DEFAULT_SATURATION, 0, 255, 0, 100)), PROP_FLAG_READ | PROP_FLAG_WRITE);
   saturationParam.addBounds(value(0), value(100), value(1));
   saturationParam.addUIType(ESP_RMAKER_UI_SLIDER);
   ws2812.addParam(saturationParam);
 
-  Param brightnessParam("Brightness", "esp.param.brightness", value((int)DEFAULT_BRIGHTNESS), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  Param brightnessParam("Brightness", "esp.param.brightness", value((int)map(DEFAULT_BRIGHTNESS, 0, 255, 0, 100)), PROP_FLAG_READ | PROP_FLAG_WRITE);
   brightnessParam.addBounds(value(0), value(100), value(1));
   brightnessParam.addUIType(ESP_RMAKER_UI_SLIDER);
   ws2812.addParam(brightnessParam);
@@ -187,7 +189,6 @@ void setup()
 
   //------------------------------------------- Adding Devices in Node -----------------------------------------------------//
   my_node.addDevice(ws2812);
-
 
   //This is optional
   RMaker.enableOTA(OTA_USING_PARAMS);
@@ -211,7 +212,6 @@ void setup()
 
 }
 
-
 void loop()
 {
   if (motion_detection) {
@@ -220,36 +220,49 @@ void loop()
   if (night_motion_detection) {
     checkForNightMotion();
   }
-  if (enable_color_preset) {
+  if (color_preset != "Custom") {
     checkColorPresets();
   }
+  if (millis() - signal_rep_time > SIGNAL_REPETITION_TIME) {
+    Serial.println("Signal Repetition Process");
+    changeHSVcolor(appliedHue, appliedSat, appliedVal);
+    signal_rep_time = millis();
+  }
+  rainmakerResetListener();
+  delay(10);
+}
 
-  //----------------------------------- Logic to Reset RainMaker
+void rainmakerResetListener() 
+{
   // Read GPIO0 (external button to reset device
-  if (digitalRead(gpio_reset) == LOW) { //Push button pressed
+  if (digitalRead(gpio_reset) == LOW)
+  { // Push button pressed
     Serial.printf("Reset Button Pressed!\n");
     // Key debounce handling
     delay(100);
     int startTime = millis();
-    while (digitalRead(gpio_reset) == LOW) delay(50);
+    while (digitalRead(gpio_reset) == LOW)
+      delay(50);
     int endTime = millis();
 
-    if ((endTime - startTime) > 10000) {
+    if ((endTime - startTime) > 10000)
+    {
       // If key pressed for more than 10secs, reset all
       Serial.printf("Reset to factory.\n");
       wifi_connected = 0;
       RMakerFactoryReset(2);
-    } else if ((endTime - startTime) > 3000) {
+    }
+    else if ((endTime - startTime) > 3000)
+    {
       Serial.printf("Reset Wi-Fi.\n");
       wifi_connected = 0;
       // If key pressed for more than 3secs, but less than 10, reset Wi-Fi
       RMakerWiFiReset(2);
     }
   }
-  delay(100);
 }
 
-void initWS2812() 
+void initWS2812()
 {
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setMaxPowerInVoltsAndMilliamps(LED_VOLTS, LED_MAX_AMPS);
@@ -272,90 +285,66 @@ void changeHSVcolor(int hue, int sat, int val)
 
 void transitionHSVColor(int targetHue, int targetSat, int targetVal)
 {
-  short int currentHue = appliedHue;
-  short int currentSat = appliedSat;
-  short int currentVal = appliedVal;
+  unsigned long int transitionStartTime = millis();
+  uint8_t k = 0;
+  Serial.printf("Target HSV values: %d, %d, %d -> %d, %d, %d\n", appliedHue, appliedSat, appliedVal, targetHue, targetSat, targetVal);
+  CHSV colorStart = CHSV(appliedHue, appliedSat, appliedVal);
+  CHSV colorTarget = CHSV(targetHue, targetSat, targetVal);
+  CHSV colorCurrent = colorStart;
 
-  short int satDir = targetSat >= currentSat ? COLOR_TRANSITION_RATE : COLOR_TRANSITION_RATE * -1;
-  short int valDir = targetVal >= currentVal ? COLOR_TRANSITION_RATE : COLOR_TRANSITION_RATE * -1;
-  
-  while (currentHue != targetHue || currentSat != targetSat || currentVal != targetVal)
+  while (colorCurrent != colorTarget)
   {
-    currentHue = targetHue;
-    currentSat = currentSat + satDir;
-    currentVal = currentVal + valDir;
+    colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
+     Serial.printf("Current values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
 
-    currentSat = targetSat * satDir > currentSat * satDir ? currentSat : targetSat;
-    currentVal = targetVal * valDir > currentVal * valDir ? currentVal : targetVal;
-
-    // Serial.printf("Current values: %d, %d, %d\n", currentHue, currentSat, currentVal);
-
-    changeHSVcolor(currentHue, currentSat, currentVal);
+    changeHSVcolor(colorCurrent.h, colorCurrent.s, colorCurrent.v);
     FastLED.delay(COLOR_TRANSITION_DELAY);
+    k++;
   }
-  Serial.printf("Applied HSV values: %d, %d, %d\n", currentHue, currentSat, currentVal);
+  Serial.printf("Applied HSV values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
+  
+  //! TODO: Fix the time function below - gives incorrect time
+  Serial.printf("Elapsed transition time: %fs\n", (millis() - transitionStartTime) / 1000);
 }
-
-void initColorTransition()
-{
-  CHSV colorStart = CHSV(appliedHue, appliedSat, appliedVal);   // starting color
-  CHSV colorTarget = CHSV(random8(), 255, 255);                 // target color
-  colorCurrent = colorStart;
-}
-
 
 void animateColorTransition() 
 {
-  EVERY_N_MILLISECONDS(BLEND_RATE)
-  {
-    static uint8_t k; // the amount to blend [0-255]
-    if (colorCurrent.h == colorTarget.h)
-    { // Check if target has been reached
-      colorStart = colorCurrent;
-      colorTarget = CHSV(random8(), 255, appliedVal); // new target to transition toward
-      k = 0;                                   // reset k value
-      Serial.print("New colorTarget:\t\t\t");
-      Serial.println(colorTarget.h);
-    }
-
-    colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
-    fill_solid(leds, NUM_LEDS, colorCurrent);
-    // leds[0] = colorTarget; // set first pixel to always show target color
-    Serial.print("colorCurrent:\t");
-    Serial.print(colorCurrent.h);
-    Serial.print("\t");
-    Serial.print("colorTarget:\t");
-    Serial.print(colorTarget.h);
-    Serial.print("\tk: ");
-    Serial.println(k);
-    k++;
+  static uint8_t k; // the amount to blend [0-255]
+  if (colorCurrent.h == colorTarget.h)
+  { // Check if target has been reached
+    colorStart = colorCurrent;
+    colorTarget = CHSV(random8(), 255, appliedVal); // new target to transition toward
+    k = 0;                                   // reset k value
+    Serial.print("New colorTarget:\t\t\t");
+    Serial.println(colorTarget.h);
   }
 
+  colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
+  fill_solid(leds, NUM_LEDS, colorCurrent);
+  // leds[0] = colorTarget; // set first pixel to always show target color
+  Serial.print("colorCurrent:\t");
+  Serial.print(colorCurrent.h);
+  Serial.print("\t");
+  Serial.print("colorTarget:\t");
+  Serial.print(colorTarget.h);
+  Serial.print("\tk: ");
+  Serial.println(k);
+  k++;
   FastLED.show(); // update the display
 }
-
 
 void checkColorPresets() 
 {
   if (millis() - prev_color_cycle_time >= DEFAULT_COLOR_CYCLE_TIME)
   {
-    if (color_preset == "Rainbow")
+    if (color_preset == "Cycle")
     {
       uint8_t newHue = appliedHue + 1;
       changeHSVcolor(newHue, appliedSat, appliedVal);
-      prev_color_cycle_time = millis();
     }
-    else if (color_preset == "Random Blend")
-    {
-      if (init_required){
-        initColorTransition();
-        init_required = false;
-      }
-      animateColorTransition();
-    }
+    prev_color_cycle_time = millis();
   }
 }
-
 
 void checkForMotion() {
   
@@ -364,8 +353,8 @@ void checkForMotion() {
     if(!motion_flag)
     {
       Serial.println("Motion detected");
-      short int prevHue = appliedHue;
-      short int newHue = appliedHue + MOTION_AWARENESS_COLOR_SHIFT;
+      uint8_t prevHue = appliedHue;
+      uint8_t newHue = appliedHue + MOTION_AWARENESS_COLOR_SHIFT;
       Serial.printf("Changing Hue: %d -> %d\n", prevHue, newHue);
       changeHSVcolor(newHue, appliedSat, appliedVal);
       FastLED.delay(DEFAULT_MOTION_AWARENESS_PERIOD);
