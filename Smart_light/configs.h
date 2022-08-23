@@ -14,7 +14,7 @@
 
 // LED CONFIG
 #define LED_TYPE WS2812
-#define NUM_LEDS 36
+#define NUM_LEDS 192
 #define COLOR_ORDER GRB
 #define COLOR_TRANSITION_DELAY 5
 #define DEFAULT_COLOR_PRESET "Custom"
