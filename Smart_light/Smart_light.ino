@@ -33,6 +33,7 @@ unsigned long int detection_time = 0;
 unsigned long int prev_color_cycle_time = 0;
 unsigned long int last_color_change_time = 0;
 unsigned long int last_split_color_change = 0;
+unsigned long int transitionStartTime;
 
 // Flag Variables
 bool motion_flag = false;
@@ -294,7 +295,7 @@ void splitColourSelector()
     {
       leds[i + j] = CHSV(newHue, 255, appliedVal);
     }
-    FastLED.delay(25);
+    FastLED.delay(cubicwave8(i*4) / 8.0);
   }
   counter++;
   if (counter * LED_SET >= NUM_LEDS)
@@ -307,7 +308,7 @@ void splitColourSelector()
 
 void transitionHSVColor(int targetHue, int targetSat, int targetVal)
 {
-  unsigned long int transitionStartTime = millis();
+  transitionStartTime = millis();
   uint8_t k = 0;
   Serial.printf("Target HSV values: %d, %d, %d -> %d, %d, %d\n", appliedHue, appliedSat, appliedVal, targetHue, targetSat, targetVal);
   CHSV colorStart = CHSV(appliedHue, appliedSat, appliedVal);
@@ -319,13 +320,14 @@ void transitionHSVColor(int targetHue, int targetSat, int targetVal)
     colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
     Serial.printf("Current values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
     changeHSVcolor(colorCurrent.h, colorCurrent.s, colorCurrent.v);
-    FastLED.delay(COLOR_TRANSITION_DELAY);
+    FastLED.delay(cubicwave8(k)/100.0);
     k++;
   }
   Serial.printf("Applied HSV values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
   
   //! TODO: Fix the time function below - gives incorrect time
-  Serial.printf("Elapsed transition time: %fs\n", (millis() - transitionStartTime) / 1000);
+  Serial.print("Elapsed transition time: ");
+  Serial.println((millis() - transitionStartTime) / 1000.0);
 }
 
 void checkColorPresets() 
@@ -339,9 +341,8 @@ void checkColorPresets()
     }
     if (color_preset == "Split Cycle")
     {
-      if (millis() - last_split_color_change > 2000)
+      if (millis() - last_split_color_change > 1000)
       {
-        uint8_t newHue = appliedHue + 21;
         splitColourSelector();
         last_split_color_change = millis();
       }

@@ -1,6 +1,6 @@
 // Device Config
 #define DEVICE_NAME "ESP_RAINMAKER"
-#define RGB_LIGHTS "Nanoleaf_Light"
+#define RGB_LIGHTS "Nanoleaf"
 #define PROV_PASSWORD "1234567"
 
 // Set Light Values
