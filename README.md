@@ -6,6 +6,11 @@ I've always loved how the [Nanoleaf Lights](https://nanoleaf.me/) looked as a de
 
 And as electronics and software engineer, I figured it would be quite easy create my own version for like about the 10th of the cost and even more features (like motion detection)
 
+## Demo
+https://user-images.githubusercontent.com/24490575/187764227-740f462d-60de-43a5-915d-b5e42f166fa6.mp4
+
+Note: The shadow parts are not as visbile with nakes eye as compared to the footage recorded on the camera (we can thank our eye's superiror dynamic range for that)
+
 ## Hardware Used
 - ESP32
 - WS2812 64 bit RGB Matrix
@@ -33,5 +38,4 @@ And as electronics and software engineer, I figured it would be quite easy creat
 
 ## Known Issues
 - The setup can get stuck if brightness/saturation controls are used in Split cycle mode
-
 
