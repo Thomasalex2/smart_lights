@@ -2,6 +2,7 @@
 #define DEVICE_NAME "ESP_RAINMAKER"
 #define RGB_LIGHTS "Nanoleaf"
 #define PROV_PASSWORD "1234567"
+#define GPIO_RESET 17
 
 // Set Light Values
 #define LED_PIN 26
@@ -29,6 +30,6 @@
 #define DEFAULT_MOTION false
 #define DEFAULT_NIGHT_MOTION false
 #define DEFAULT_MOTION_AWARENESS_PERIOD 4000
-#define COLOR_SHIFT 20
+#define COLOR_SHIFT 41
 #define NIGHT_MOTION_BRIGHTNESS 100
 #define NIGHT_MOTION_TIMEOUT 10000
