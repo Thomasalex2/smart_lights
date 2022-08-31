@@ -1,6 +1,7 @@
 {
     "cSpell.words": [
-        "CHSV"
+        "CHSV",
+        "customisability"
     ],
     "files.associations": {
         "system_error": "cpp"

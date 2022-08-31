@@ -10,7 +10,6 @@ const char *service_name = "PROV_" DEVICE_NAME;
 const char *pop = PROV_PASSWORD;
 
 // GPIO
-static uint8_t gpio_reset = 0;
 bool light_state = false;
 bool wifi_connected = 0;
 
@@ -30,8 +29,8 @@ String color_preset = DEFAULT_COLOR_PRESET;
 
 // Timing Variables
 unsigned long int detection_time = 0;
-unsigned long int prev_color_cycle_time = 0;
-unsigned long int signal_rep_time = 0;
+unsigned long int last_color_change_time = 0;
+unsigned long int transitionStartTime;
 
 // Flag Variables
 bool motion_flag = false;
@@ -100,6 +99,7 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
       } 
       else 
       {
+        color_preset = "Custom";
         brightnessBeforeTurnOff = appliedVal;
         transitionHSVColor(appliedHue, appliedSat, 0);
         Serial.println("Turning off " DEVICE_NAME);
@@ -114,12 +114,14 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
     else if (strcmp(param_name, "Hue") == 0)
     {
       Serial.printf("Received value = %d for %s - %s\n", val.val.i, device_name, param_name);
+      color_preset = "Custom";
       uint8_t newHue = map(val.val.i, 0, 360, 0, 255);
       transitionHSVColor(newHue, appliedSat, appliedVal);
     }
     else if (strcmp(param_name, "Saturation") == 0)
     {
       Serial.printf("Received value = %d for %s - %s\n", val.val.i, device_name, param_name);
+      color_preset = "Custom";
       uint8_t newSat = map(val.val.i, 0, 100, 0, 255);
       transitionHSVColor(appliedHue, newSat, appliedVal);
     }
@@ -142,106 +144,16 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
   }
 }
 
-void setup()
-{
-  // Configure the input GPIOs
-  pinMode(gpio_reset, INPUT);
-  pinMode(MOTION_PIN, INPUT);
-
-  initWS2812();
-  Serial.begin(115200);
-
-  //------------------------------------------- Declaring Node -----------------------------------------------------//
-  Node my_node;
-  my_node = RMaker.initNode("Nanoleaf");
-
-  static const char *colorPresetModes[] = {"Custom", "Cycle"};
-  Param colorPresets("Colour Presets", ESP_RMAKER_PARAM_MODE, value("Custom"), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  colorPresets.addValidStrList(colorPresetModes, 2);
-  colorPresets.addUIType(ESP_RMAKER_UI_DROPDOWN);
-  ws2812.addParam(colorPresets);
-
-  Param hueParam("Hue", "esp.param.hue", value((int)map(DEFAULT_HUE, 0, 255, 0, 360)), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  hueParam.addBounds(value(0), value(360), value(1));
-  hueParam.addUIType(ESP_RMAKER_UI_HUE_CIRCLE);
-  ws2812.addParam(hueParam);
-
-  Param saturationParam("Saturation", "esp.param.saturation", value((int)map(DEFAULT_SATURATION, 0, 255, 0, 100)), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  saturationParam.addBounds(value(0), value(100), value(1));
-  saturationParam.addUIType(ESP_RMAKER_UI_SLIDER);
-  ws2812.addParam(saturationParam);
-
-  Param brightnessParam("Brightness", "esp.param.brightness", value((int)map(DEFAULT_BRIGHTNESS, 0, 255, 0, 100)), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  brightnessParam.addBounds(value(0), value(100), value(1));
-  brightnessParam.addUIType(ESP_RMAKER_UI_SLIDER);
-  ws2812.addParam(brightnessParam);
-
-  Param motionParam("Motion Awareness", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  motionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
-  ws2812.addParam(motionParam);
-
-  Param nightMotionParam("Night Motion Detection", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  nightMotionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
-  ws2812.addParam(nightMotionParam);
-
-  //Standard switch device
-  ws2812.addCb(write_callback);
-
-  //------------------------------------------- Adding Devices in Node -----------------------------------------------------//
-  my_node.addDevice(ws2812);
-
-  //This is optional
-  RMaker.enableOTA(OTA_USING_PARAMS);
-  //If you want to enable scheduling, set time zone for your region using setTimeZone().
-  //The list of available values are provided here https://rainmaker.espressif.com/docs/time-service.html
-  RMaker.setTimeZone("Asia/Kolkata");
-  // Alternatively, enable the Timezone service and let the phone apps set the appropriate timezone
-  RMaker.enableTZService();
-  RMaker.enableSchedule();
-
-  Serial.printf("\nStarting ESP-RainMaker\n");
-  RMaker.start();
-
-  WiFi.onEvent(sysProvEvent);
-
-  #if CONFIG_IDF_TARGET_ESP32
-    WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE, WIFI_PROV_SCHEME_HANDLER_FREE_BTDM, WIFI_PROV_SECURITY_1, pop, service_name);
-  #else
-    WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_1, pop, service_name);
-  #endif
-
-}
-
-void loop()
-{
-  if (motion_detection) {
-    checkForMotion();
-  }
-  if (night_motion_detection) {
-    checkForNightMotion();
-  }
-  if (color_preset != "Custom") {
-    checkColorPresets();
-  }
-  if (millis() - signal_rep_time > SIGNAL_REPETITION_TIME) {
-    Serial.println("Signal Repetition Process");
-    changeHSVcolor(appliedHue, appliedSat, appliedVal);
-    signal_rep_time = millis();
-  }
-  rainmakerResetListener();
-  delay(10);
-}
-
 void rainmakerResetListener() 
 {
   // Read GPIO0 (external button to reset device
-  if (digitalRead(gpio_reset) == LOW)
+  if (digitalRead(GPIO_RESET) == LOW)
   { // Push button pressed
     Serial.printf("Reset Button Pressed!\n");
     // Key debounce handling
     delay(100);
     int startTime = millis();
-    while (digitalRead(gpio_reset) == LOW)
+    while (digitalRead(GPIO_RESET) == LOW)
       delay(50);
     int endTime = millis();
 
@@ -281,11 +193,42 @@ void changeHSVcolor(int hue, int sat, int val)
   appliedHue = hue;
   appliedSat = sat;
   appliedVal = val;
+  last_color_change_time = millis();
+}
+
+void splitColourSelector()
+{
+  static int counter = 0;
+  static bool skip_ahead = false;
+  static uint8_t prevHue = 0;
+  uint8_t newHue = skip_ahead ? prevHue + COLOR_SHIFT * NUM_LEDS/LED_SET : prevHue + COLOR_SHIFT;
+  Serial.printf("Counter: %i \t Hue: %i\n", counter, newHue);
+  for (int i = 0 + (LED_SET * counter); i < LED_SET * (counter + 1); i += 8)
+  {
+    for (int j = 0; j < 8; j++)
+    {
+      leds[i + j] = CHSV(newHue, 255, appliedVal);
+    }
+    FastLED.delay(cubicwave8(i * 4) / 8.0);
+    }
+  counter++;
+  if (counter * LED_SET >= NUM_LEDS)
+  {
+    counter = 0;
+    skip_ahead = true;
+  }
+  else 
+  {
+    skip_ahead = false;
+  }
+  prevHue = newHue;
+  FastLED.show();
+  last_color_change_time = millis();
 }
 
 void transitionHSVColor(int targetHue, int targetSat, int targetVal)
 {
-  unsigned long int transitionStartTime = millis();
+  transitionStartTime = millis();
   uint8_t k = 0;
   Serial.printf("Target HSV values: %d, %d, %d -> %d, %d, %d\n", appliedHue, appliedSat, appliedVal, targetHue, targetSat, targetVal);
   CHSV colorStart = CHSV(appliedHue, appliedSat, appliedVal);
@@ -295,70 +238,49 @@ void transitionHSVColor(int targetHue, int targetSat, int targetVal)
   while (colorCurrent != colorTarget)
   {
     colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
-     Serial.printf("Current values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
-
+    Serial.printf("Current values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
     changeHSVcolor(colorCurrent.h, colorCurrent.s, colorCurrent.v);
-    FastLED.delay(COLOR_TRANSITION_DELAY);
+    FastLED.delay(cubicwave8(k)/100.0);
     k++;
   }
   Serial.printf("Applied HSV values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
-  
-  //! TODO: Fix the time function below - gives incorrect time
-  Serial.printf("Elapsed transition time: %fs\n", (millis() - transitionStartTime) / 1000);
-}
-
-void animateColorTransition() 
-{
-  static uint8_t k; // the amount to blend [0-255]
-  if (colorCurrent.h == colorTarget.h)
-  { // Check if target has been reached
-    colorStart = colorCurrent;
-    colorTarget = CHSV(random8(), 255, appliedVal); // new target to transition toward
-    k = 0;                                   // reset k value
-    Serial.print("New colorTarget:\t\t\t");
-    Serial.println(colorTarget.h);
-  }
-
-  colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
-  fill_solid(leds, NUM_LEDS, colorCurrent);
-  // leds[0] = colorTarget; // set first pixel to always show target color
-  Serial.print("colorCurrent:\t");
-  Serial.print(colorCurrent.h);
-  Serial.print("\t");
-  Serial.print("colorTarget:\t");
-  Serial.print(colorTarget.h);
-  Serial.print("\tk: ");
-  Serial.println(k);
-  k++;
-  FastLED.show(); // update the display
+  Serial.print("Elapsed transition time: ");
+  Serial.println((millis() - transitionStartTime) / 1000.0);
 }
 
 void checkColorPresets() 
 {
-  if (millis() - prev_color_cycle_time >= DEFAULT_COLOR_CYCLE_TIME)
+  EVERY_N_MILLISECONDS(DEFAULT_COLOR_CYCLE_TIME)
   {
     if (color_preset == "Cycle")
     {
       uint8_t newHue = appliedHue + 1;
       changeHSVcolor(newHue, appliedSat, appliedVal);
     }
-    prev_color_cycle_time = millis();
+    if (color_preset == "Split Cycle")
+    {
+      EVERY_N_MILLISECONDS(1000)
+      {
+        splitColourSelector();
+      }
+    }
   }
 }
 
-void checkForMotion() {
-  
+void checkForMotion()
+{
+
   if (digitalRead(MOTION_PIN))
   {
     if(!motion_flag)
     {
       Serial.println("Motion detected");
       uint8_t prevHue = appliedHue;
-      uint8_t newHue = appliedHue + MOTION_AWARENESS_COLOR_SHIFT;
+      uint8_t newHue = appliedHue + COLOR_SHIFT;
       Serial.printf("Changing Hue: %d -> %d\n", prevHue, newHue);
-      changeHSVcolor(newHue, appliedSat, appliedVal);
+      transitionHSVColor(newHue, appliedSat, appliedVal);
       FastLED.delay(DEFAULT_MOTION_AWARENESS_PERIOD);
-      changeHSVcolor(prevHue, appliedSat, appliedVal);
+      transitionHSVColor(prevHue, appliedSat, appliedVal);
       motion_flag = true;
     }
   }
@@ -371,7 +293,7 @@ void checkForNightMotion()
 {
   if (digitalRead(MOTION_PIN) && !night_motion_flag && !light_state)
   {
-    Serial.println("Motion detected");
+    Serial.println("Night motion detected");
     transitionHSVColor(appliedHue, appliedSat, NIGHT_MOTION_BRIGHTNESS);
     night_motion_flag = true;
     night_light_state = true;
@@ -386,4 +308,93 @@ void checkForNightMotion()
       night_light_state = false;
     } 
   }
+}
+
+void setup()
+{
+  // Configure the input GPIOs
+  pinMode(GPIO_RESET, INPUT_PULLUP);
+  pinMode(MOTION_PIN, INPUT);
+
+  initWS2812();
+  Serial.begin(115200);
+
+  //------------------------------------------- Declaring Node -----------------------------------------------------//
+  Node my_node;
+  my_node = RMaker.initNode("Nanoleaf");
+
+  static const char *colorPresetModes[] = {"Custom", "Cycle", "Split Cycle"};
+  Param colorPresets("Colour Presets", ESP_RMAKER_PARAM_MODE, value("Custom"), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  colorPresets.addValidStrList(colorPresetModes, 3);
+  colorPresets.addUIType(ESP_RMAKER_UI_DROPDOWN);
+  ws2812.addParam(colorPresets);
+
+  Param hueParam("Hue", "esp.param.hue", value((int)map(DEFAULT_HUE, 0, 255, 0, 360)), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  hueParam.addBounds(value(0), value(360), value(1));
+  hueParam.addUIType(ESP_RMAKER_UI_HUE_CIRCLE);
+  ws2812.addParam(hueParam);
+
+  Param brightnessParam("Brightness", "esp.param.brightness", value((int)map(DEFAULT_BRIGHTNESS, 0, 255, 0, 100)), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  brightnessParam.addBounds(value(0), value(100), value(1));
+  brightnessParam.addUIType(ESP_RMAKER_UI_SLIDER);
+  ws2812.addParam(brightnessParam);
+
+  Param saturationParam("Saturation", "esp.param.saturation", value((int)map(DEFAULT_SATURATION, 0, 255, 0, 100)), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  saturationParam.addBounds(value(0), value(100), value(1));
+  saturationParam.addUIType(ESP_RMAKER_UI_SLIDER);
+  ws2812.addParam(saturationParam);
+
+  Param motionParam("Motion Awareness", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  motionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
+  ws2812.addParam(motionParam);
+
+  Param nightMotionParam("Night Motion Detection", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  nightMotionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
+  ws2812.addParam(nightMotionParam);
+
+  // Standard switch device
+  ws2812.addCb(write_callback);
+
+  //------------------------------------------- Adding Devices in Node -----------------------------------------------------//
+  my_node.addDevice(ws2812);
+
+  // This is optional
+  RMaker.enableOTA(OTA_USING_PARAMS);
+  RMaker.setTimeZone("Asia/Kolkata");
+  RMaker.enableTZService();
+  RMaker.enableSchedule();
+
+  Serial.printf("\nStarting ESP-RainMaker\n");
+  RMaker.start();
+
+  WiFi.onEvent(sysProvEvent);
+
+#if CONFIG_IDF_TARGET_ESP32
+  WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE, WIFI_PROV_SCHEME_HANDLER_FREE_BTDM, WIFI_PROV_SECURITY_1, pop, service_name);
+#else
+  WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_1, pop, service_name);
+#endif
+}
+
+void loop()
+{
+  if (motion_detection)
+  {
+    checkForMotion();
+  }
+  if (night_motion_detection)
+  {
+    checkForNightMotion();
+  }
+  if (color_preset != "Custom")
+  {
+    checkColorPresets();
+  }
+  if (millis() - last_color_change_time > SIGNAL_REPETITION_TIME)
+  {
+    Serial.println("Signal Repetition Process");
+    changeHSVcolor(appliedHue, appliedSat, appliedVal);
+    last_color_change_time = millis();
+  }
+  rainmakerResetListener();
 }

@@ -21,6 +21,7 @@ And as electronics and software engineer, I figured it would be quite easy creat
 - Supports control with Google Assistant and Alexa
 - Customize the lights to any color with color wheel
 - Cycle gradually through all colour
+- Split cycle mode giving each tile individual colours
 - React to motion
 - Turn on lights to low brightness when motion is detected
 
@@ -30,5 +31,7 @@ And as electronics and software engineer, I figured it would be quite easy creat
 - LED grouping Features
 - Disco Mode
 
+## Known Issues
+- The setup can get stuck if brightness/saturation controls are used in Split cycle mode
 
 
