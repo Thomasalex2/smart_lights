@@ -3,6 +3,9 @@
 #include "WiFi.h"
 #include "WiFiProv.h"
 #include <wifi_provisioning/manager.h>
+#include "FS.h"
+#include <LittleFS.h>
+#include <ArduinoJson.h>
 #include "configs.h"
 
 // BLE Credentials
@@ -17,15 +20,13 @@ bool wifi_connected = 0;
 CRGB leds[NUM_LEDS];
 
 // INITIAL VALUES
-uint8_t appliedHue = DEFAULT_HUE;
-uint8_t appliedSat = DEFAULT_SATURATION;
-uint8_t appliedVal = DEFAULT_BRIGHTNESS;
-uint8_t brightnessBeforeTurnOff = DEFAULT_BRIGHTNESS;
-bool motion_detection = DEFAULT_MOTION;
-bool night_motion_detection = DEFAULT_NIGHT_MOTION;
-
-// Initialization Variables
-String color_preset = DEFAULT_COLOR_PRESET;
+uint8_t appliedHue;
+uint8_t appliedSat;
+uint8_t appliedVal;
+String color_preset;
+uint8_t brightnessBeforeTurnOff;
+bool motion_detection;
+bool night_motion_detection;
 
 // Timing Variables
 unsigned long int detection_time = 0;
@@ -40,6 +41,26 @@ bool night_light_state = false;
 CHSV colorCurrent;
 CHSV colorStart;
 CHSV colorTarget;
+
+DynamicJsonDocument config_json(JSON_LENGTH);
+
+// Function Prototypes
+void sysProvEvent(arduino_event_t *sys_event);
+void write_callback(Device *device, Param *param, const param_val_t val, void *priv_data, write_ctx_t *ctx);
+void rainmakerResetListener();
+void initWS2812();
+bool initLittleFs();
+void deserializeAndGetConfig(String config);
+String serializeConfig();
+String readFile(fs::FS &fs, const char *path);
+void writeFile(fs::FS &fs, const char *path, const char *message);
+void getPrevUserConfig();
+void changeHSVcolor(int hue, int sat, int val);
+void splitColourSelector();
+void transitionHSVColor(int targetHue, int targetSat, int targetVal);
+void checkColorPresets();
+void checkForMotion();
+void checkForNightMotion();
 
 //------------------------------------------- Declaring Devices -----------------------------------------------------//
 
@@ -141,6 +162,9 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
       Serial.println(night_motion_detection == true ? "Turning on Night Motion Awareness" : "Turning off Night Motion Awareness");
     }
     param->updateAndReport(val);
+    String newConfig = serializeConfig();
+    Serial.println("Constructed new JSON config - " + newConfig);
+    writeFile(LittleFS, USER_CONFIG_FILE, newConfig.c_str());
   }
 }
 
@@ -179,11 +203,99 @@ void initWS2812()
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setMaxPowerInVoltsAndMilliamps(LED_VOLTS, LED_MAX_AMPS);
   FastLED.clear();
-  if (DEFAULT_LIGHT)
-  {
-    fill_solid(leds, NUM_LEDS, CHSV(appliedHue, appliedSat, appliedVal));
-  }
+  fill_solid(leds, NUM_LEDS, CHSV(appliedHue, appliedSat, appliedVal));
   FastLED.show();
+}
+
+bool initLittleFs()
+{
+  if (!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED))
+  {
+    Serial.println("LittleFS Mount Failed");
+    return false;
+  }
+  return true;
+}
+
+void deserializeAndGetConfig(String savedConfig)
+{
+  deserializeJson(config_json, savedConfig);
+  appliedHue = config_json["hsv"]["hue"];
+  appliedSat = config_json["hsv"]["sat"];
+  appliedVal = config_json["hsv"]["val"];
+  brightnessBeforeTurnOff = appliedVal;
+  color_preset = config_json["preset"].as<String>();
+  motion_detection = config_json["awareness"];
+  night_motion_detection = config_json["night_motion_flag"];
+}
+
+String serializeConfig()
+{
+  String jsonSerialized;
+  config_json["hsv"]["hue"] = appliedHue;
+  config_json["hsv"]["sat"] = appliedSat;
+  config_json["hsv"]["val"] = appliedVal;
+  config_json["preset"] = color_preset;
+  config_json["awareness"] = motion_flag;
+  config_json["night_motion_flag"] = night_motion_flag;
+  serializeJson(config_json, jsonSerialized);
+  return jsonSerialized;
+}
+
+String readFile(fs::FS &fs, const char *path)
+{
+  String jsonConfig;
+  Serial.printf("Reading file: %s\r\n", path);
+  File file = fs.open(path);
+  if (!file || file.isDirectory())
+  {
+    Serial.println("- failed to open file for reading");
+    return "";
+  }
+  Serial.println("- read from file:");
+  while (file.available())
+  {
+    jsonConfig = file.readString();
+  }
+  file.close();
+  return jsonConfig;
+}
+
+void writeFile(fs::FS &fs, const char *path, const char *message)
+{
+  Serial.printf("Writing file: %s\r\n", path);
+
+  File file = fs.open(path, FILE_WRITE);
+  if (!file)
+  {
+    Serial.println("- failed to open file for writing");
+    return;
+  }
+  if (file.print(message))
+  {
+    Serial.println("- file written");
+  }
+  else
+  {
+    Serial.println("- write failed");
+  }
+  file.close();
+}
+
+void getPrevUserConfig()
+{
+  String savedConfig = readFile(LittleFS, USER_CONFIG_FILE);
+  if (savedConfig != "")
+  {
+    Serial.print("Retrieved Config - ");
+  }
+  else
+  {
+    Serial.println("File not found - reverting to default");
+    savedConfig = DEFAULT_SETTINGS_JSON;
+  }
+  Serial.println(savedConfig);
+  deserializeAndGetConfig(savedConfig);
 }
 
 void changeHSVcolor(int hue, int sat, int val)
@@ -240,7 +352,7 @@ void transitionHSVColor(int targetHue, int targetSat, int targetVal)
     colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
     Serial.printf("Current values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
     changeHSVcolor(colorCurrent.h, colorCurrent.s, colorCurrent.v);
-    FastLED.delay(cubicwave8(k)/100.0);
+    FastLED.delay(cubicwave8(k)/50.0);
     k++;
   }
   Serial.printf("Applied HSV values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
@@ -316,8 +428,10 @@ void setup()
   pinMode(GPIO_RESET, INPUT_PULLUP);
   pinMode(MOTION_PIN, INPUT);
 
+  Serial.begin(115200);  
+  initLittleFs();
+  getPrevUserConfig();
   initWS2812();
-  Serial.begin(115200);
 
   //------------------------------------------- Declaring Node -----------------------------------------------------//
   Node my_node;

@@ -1,0 +1,1 @@
+{"hsv" : {"hue" :128, "sat" :255, "val" : 127}, "preset" : "Custom", "motion": { "awareness" : false, "night_motion" : false }}

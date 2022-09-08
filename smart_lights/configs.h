@@ -1,8 +1,13 @@
+#define STR_(x) #x
+#define STR(x) STR_(x)
+
 // Device Config
 #define DEVICE_NAME "ESP_RAINMAKER"
 #define RGB_LIGHTS "Nanoleaf"
 #define PROV_PASSWORD "1234567"
-#define GPIO_RESET 17
+#define GPIO_RESET 4
+#define FORMAT_LITTLEFS_IF_FAILED true
+#define USER_CONFIG_FILE "/user_settings.txt"
 
 // Set Light Values
 #define LED_PIN 26
@@ -33,3 +38,6 @@
 #define COLOR_SHIFT 41
 #define NIGHT_MOTION_BRIGHTNESS 100
 #define NIGHT_MOTION_TIMEOUT 10000
+
+#define JSON_LENGTH 256
+#define DEFAULT_SETTINGS_JSON "{\"hsv\" : {\"hue\" :" STR(DEFAULT_HUE) ", \"sat\" :" STR(DEFAULT_SATURATION) ", \"val\" : " STR(DEFAULT_BRIGHTNESS) "}, \"preset\" : \"" DEFAULT_COLOR_PRESET "\", \"motion\": { \"awareness\" : " STR(DEFAULT_MOTION) ", \"night_motion\" : " STR(DEFAULT_NIGHT_MOTION) " }}"
