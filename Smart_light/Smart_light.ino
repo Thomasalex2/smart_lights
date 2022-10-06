@@ -26,6 +26,7 @@ bool night_motion_detection = DEFAULT_NIGHT_MOTION;
 
 // Initialization Variables
 String color_preset = DEFAULT_COLOR_PRESET;
+String color_pallette = DEFAULT_COLOR_PALETTE;
 
 // Timing Variables
 unsigned long int detection_time = 0;
@@ -40,6 +41,8 @@ bool night_light_state = false;
 CHSV colorCurrent;
 CHSV colorStart;
 CHSV colorTarget;
+
+CRGBPalette16 currentPalette;
 
 //------------------------------------------- Declaring Devices -----------------------------------------------------//
 
@@ -130,6 +133,12 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
       color_preset = val.val.s;
       Serial.printf("\nReceived value = %s for %s - %s\n", val.val.s, device_name, param_name);
     }
+    else if (strcmp(param_name, "Colour Pallettes") == 0)
+    {
+      color_pallette = val.val.s;
+      Serial.printf("\nReceived value = %s for %s - %s\n", val.val.s, device_name, param_name);
+      changeColorPallette(color_pallette);
+    }
     else if (strcmp(param_name, "Motion Awareness") == 0)
     {
       motion_detection = val.val.b;
@@ -189,7 +198,7 @@ void initWS2812()
 void changeHSVcolor(int hue, int sat, int val)
 {
   fill_solid(leds, NUM_LEDS, CHSV(hue, sat, val));
-  FastLED.show();
+  FastLED.delay(1);
   appliedHue = hue;
   appliedSat = sat;
   appliedVal = val;
@@ -248,21 +257,72 @@ void transitionHSVColor(int targetHue, int targetSat, int targetVal)
   Serial.println((millis() - transitionStartTime) / 1000.0);
 }
 
+void changeColorPallette(String userSelectedPallette)
+{
+  if (userSelectedPallette == "Clouds")
+  {
+    currentPalette = CloudColors_p;
+  }
+  else if (userSelectedPallette == "Rainbow")
+  {
+    currentPalette = RainbowColors_p;
+  }
+  else if (userSelectedPallette == "Rainbow Stripe")
+  {
+    currentPalette = RainbowStripeColors_p;
+  }
+  else if (userSelectedPallette == "Party")
+  {
+    currentPalette = PartyColors_p;
+  }
+  else if (userSelectedPallette == "Ocean")
+  {
+    currentPalette = OceanColors_p;
+  }
+  else if (userSelectedPallette == "Lava")
+  {
+    currentPalette = LavaColors_p;
+  }
+  else if (userSelectedPallette == "Forest")
+  {
+    currentPalette = ForestColors_p;
+  }
+}
+
+void FillLEDsFromPaletteColors(uint8_t colorIndex)
+{
+  for (int i = 0; i < NUM_LEDS; ++i)
+  {
+    leds[i] = ColorFromPalette(currentPalette, colorIndex, appliedVal, LINEARBLEND);
+    colorIndex += 3;
+  }
+  last_color_change_time = millis();
+}
+
 void checkColorPresets() 
 {
-  EVERY_N_MILLISECONDS(DEFAULT_COLOR_CYCLE_TIME)
+  if (color_preset == "Cycle")
   {
-    if (color_preset == "Cycle")
+    EVERY_N_MILLISECONDS(DEFAULT_COLOR_CYCLE_TIME)
     {
       uint8_t newHue = appliedHue + 1;
       changeHSVcolor(newHue, appliedSat, appliedVal);
     }
-    if (color_preset == "Split Cycle")
+  }
+  else if (color_preset == "Split Cycle")
+  {
+    EVERY_N_MILLISECONDS(DEFAULT_SPLIT_CYCLE_TIME)
     {
-      EVERY_N_MILLISECONDS(1000)
-      {
-        splitColourSelector();
-      }
+      splitColourSelector();
+    }
+  }
+  else if (color_preset == "Palette")
+  {
+    EVERY_N_MILLISECONDS(DEFAULT_PALLETTE_CYCLE_TIME)
+    {
+      static uint8_t startIndex = 0;
+      startIndex = startIndex + 1;
+      FillLEDsFromPaletteColors(startIndex);
     }
   }
 }
@@ -323,15 +383,21 @@ void setup()
   Node my_node;
   my_node = RMaker.initNode("Nanoleaf");
 
-  static const char *colorPresetModes[] = {"Custom", "Cycle", "Split Cycle"};
-  Param colorPresets("Colour Presets", ESP_RMAKER_PARAM_MODE, value("Custom"), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  colorPresets.addValidStrList(colorPresetModes, 3);
+  static const char *colorPresetModes[] = {"Custom", "Cycle", "Split Cycle", "Palette"};
+  Param colorPresets("Colour Presets", ESP_RMAKER_PARAM_MODE, value(DEFAULT_COLOR_PRESET), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  colorPresets.addValidStrList(colorPresetModes, 4);
   colorPresets.addUIType(ESP_RMAKER_UI_DROPDOWN);
   ws2812.addParam(colorPresets);
 
+  static const char *colorPallettesMode[] = {"Clouds", "Rainbow", "Rainbow Stripe", "Party", "Ocean", "Lava", "Forest"};
+  Param colorPallettes("Colour Pallettes", ESP_RMAKER_PARAM_MODE, value(DEFAULT_COLOR_PALETTE), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  colorPallettes.addValidStrList(colorPallettesMode, 7);
+  colorPallettes.addUIType(ESP_RMAKER_UI_DROPDOWN);
+  ws2812.addParam(colorPallettes);
+
   Param hueParam("Hue", "esp.param.hue", value((int)map(DEFAULT_HUE, 0, 255, 0, 360)), PROP_FLAG_READ | PROP_FLAG_WRITE);
   hueParam.addBounds(value(0), value(360), value(1));
-  hueParam.addUIType(ESP_RMAKER_UI_HUE_CIRCLE);
+  hueParam.addUIType(ESP_RMAKER_UI_HUE_SLIDER);
   ws2812.addParam(hueParam);
 
   Param brightnessParam("Brightness", "esp.param.brightness", value((int)map(DEFAULT_BRIGHTNESS, 0, 255, 0, 100)), PROP_FLAG_READ | PROP_FLAG_WRITE);
@@ -344,13 +410,13 @@ void setup()
   saturationParam.addUIType(ESP_RMAKER_UI_SLIDER);
   ws2812.addParam(saturationParam);
 
-  Param motionParam("Motion Awareness", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  motionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
-  ws2812.addParam(motionParam);
+  // Param motionParam("Motion Awareness", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  // motionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
+  // ws2812.addParam(motionParam);
 
-  Param nightMotionParam("Night Motion Detection", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  nightMotionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
-  ws2812.addParam(nightMotionParam);
+  // Param nightMotionParam("Night Motion Detection", "esp.param.power", value((bool)DEFAULT_MOTION), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  // nightMotionParam.addUIType(ESP_RMAKER_UI_TOGGLE);
+  // ws2812.addParam(nightMotionParam);
 
   // Standard switch device
   ws2812.addCb(write_callback);
@@ -397,4 +463,5 @@ void loop()
     last_color_change_time = millis();
   }
   rainmakerResetListener();
+  FastLED.show();
 }
