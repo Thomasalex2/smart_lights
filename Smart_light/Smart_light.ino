@@ -26,12 +26,22 @@ bool night_motion_detection = DEFAULT_NIGHT_MOTION;
 
 // Initialization Variables
 String color_preset = DEFAULT_COLOR_PRESET;
-String color_pallette = DEFAULT_COLOR_PALETTE;
+String color_palette = DEFAULT_COLOR_PALETTE;
 
 // Timing Variables
 unsigned long int detection_time = 0;
 unsigned long int last_color_change_time = 0;
 unsigned long int transitionStartTime;
+
+// Color Palette Struct
+CRGBPalette16 currentPalette = ForestColors_p;
+
+// struct palettes
+// {
+//   char userInput[30];
+//   CRGBPalette16 definedPalette;
+// };
+// palettes colorPalette[NUMBER_OF_PALLETTES_DEFINED];
 
 // Flag Variables
 bool motion_flag = false;
@@ -41,8 +51,6 @@ bool night_light_state = false;
 CHSV colorCurrent;
 CHSV colorStart;
 CHSV colorTarget;
-
-CRGBPalette16 currentPalette;
 
 //------------------------------------------- Declaring Devices -----------------------------------------------------//
 
@@ -133,11 +141,11 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
       color_preset = val.val.s;
       Serial.printf("\nReceived value = %s for %s - %s\n", val.val.s, device_name, param_name);
     }
-    else if (strcmp(param_name, "Colour Pallettes") == 0)
+    else if (strcmp(param_name, "Colour Palettes") == 0)
     {
-      color_pallette = val.val.s;
+      color_palette = val.val.s;
       Serial.printf("\nReceived value = %s for %s - %s\n", val.val.s, device_name, param_name);
-      changeColorPallette(color_pallette);
+      changeColorPalette(color_palette);
     }
     else if (strcmp(param_name, "Motion Awareness") == 0)
     {
@@ -205,6 +213,39 @@ void changeHSVcolor(int hue, int sat, int val)
   last_color_change_time = millis();
 }
 
+// Somehow this function is corrupting the entire memory system (i don't know why)
+// void initializeColorPalettes()
+// {
+//   Serial.println("Configuring palettes");
+//   strncpy(colorPalette[0].userInput, "Rainbow", 20);
+//   colorPalette[0].definedPalette = RainbowColors_p;
+
+//   strncpy(colorPalette[1].userInput, "Rainbow Stripe", 20);
+//   // colorPalette[1].userInput = "Rainbow Stripe";
+//   colorPalette[1].definedPalette = RainbowStripeColors_p;
+
+//   strncpy(colorPalette[2].userInput, "Clouds", 20);
+//   // colorPalette[2].userInput = "Clouds";
+//   colorPalette[2].definedPalette = CloudColors_p;
+
+//   strncpy(colorPalette[3].userInput, "Party", 20);
+//   // colorPalette[3].userInput = "Party";
+//   colorPalette[3].definedPalette = PartyColors_p;
+
+//   strncpy(colorPalette[4].userInput, "Ocean", 20);
+//   // colorPalette[4].userInput = "Ocean";
+//   colorPalette[4].definedPalette = OceanColors_p;
+
+//   strncpy(colorPalette[5].userInput, "Lava", 20);
+//   // colorPalette[5].userInput = "Lava";
+//   colorPalette[5].definedPalette = LavaColors_p;
+
+//   strncpy(colorPalette[6].userInput, "Forest", 20);
+//   // colorPalette[6].userInput = "Forest";
+//   colorPalette[6].definedPalette = ForestColors_p;
+//   Serial.println("Done Configuring palettes");
+// }
+
 void splitColourSelector()
 {
   static int counter = 0;
@@ -237,8 +278,8 @@ void splitColourSelector()
 
 void transitionHSVColor(int targetHue, int targetSat, int targetVal)
 {
-  transitionStartTime = millis();
   uint8_t k = 0;
+  transitionStartTime = millis();
   Serial.printf("Target HSV values: %d, %d, %d -> %d, %d, %d\n", appliedHue, appliedSat, appliedVal, targetHue, targetSat, targetVal);
   CHSV colorStart = CHSV(appliedHue, appliedSat, appliedVal);
   CHSV colorTarget = CHSV(targetHue, targetSat, targetVal);
@@ -249,41 +290,56 @@ void transitionHSVColor(int targetHue, int targetSat, int targetVal)
     colorCurrent = blend(colorStart, colorTarget, k, SHORTEST_HUES);
     Serial.printf("Current values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
     changeHSVcolor(colorCurrent.h, colorCurrent.s, colorCurrent.v);
-    FastLED.delay(cubicwave8(k)/100.0);
+    FastLED.delay(10);
     k++;
   }
   Serial.printf("Applied HSV values: %d, %d, %d\n", colorCurrent.h, colorCurrent.s, colorCurrent.v);
   Serial.print("Elapsed transition time: ");
   Serial.println((millis() - transitionStartTime) / 1000.0);
+  last_color_change_time = millis();
 }
 
-void changeColorPallette(String userSelectedPallette)
+void changeColorPalette(String userSelectedPalette)
 {
-  if (userSelectedPallette == "Clouds")
+  // char selectedPalette[30];
+  // userSelectedPalette.toCharArray(selectedPalette, userSelectedPalette.length() + 1);
+  // for (int i = 0; i < NUMBER_OF_PALLETTES_DEFINED; i++)
+  // {
+  //   if (strcmp(colorPalette[i].userInput, selectedPalette))
+  //   {
+  //     currentPalette = colorPalette[i].definedPalette;
+  //     Serial.printf("Selected Palette: %s\n", selectedPalette);
+  //     break;
+  //   }
+  // }
+
+  // Teh above code was an effort to reduce this dumb if-else ladder but the initializing function is ruining everything for some inexclipble reason
+
+  if (userSelectedPalette == "Clouds")
   {
     currentPalette = CloudColors_p;
   }
-  else if (userSelectedPallette == "Rainbow")
+  else if (userSelectedPalette == "Rainbow")
   {
     currentPalette = RainbowColors_p;
   }
-  else if (userSelectedPallette == "Rainbow Stripe")
+  else if (userSelectedPalette == "Rainbow Stripe")
   {
     currentPalette = RainbowStripeColors_p;
   }
-  else if (userSelectedPallette == "Party")
+  else if (userSelectedPalette == "Party")
   {
     currentPalette = PartyColors_p;
   }
-  else if (userSelectedPallette == "Ocean")
+  else if (userSelectedPalette == "Ocean")
   {
     currentPalette = OceanColors_p;
   }
-  else if (userSelectedPallette == "Lava")
+  else if (userSelectedPalette == "Lava")
   {
     currentPalette = LavaColors_p;
   }
-  else if (userSelectedPallette == "Forest")
+  else if (userSelectedPalette == "Forest")
   {
     currentPalette = ForestColors_p;
   }
@@ -296,11 +352,13 @@ void FillLEDsFromPaletteColors(uint8_t colorIndex)
     leds[i] = ColorFromPalette(currentPalette, colorIndex, appliedVal, LINEARBLEND);
     colorIndex += 3;
   }
+  FastLED.show();
   last_color_change_time = millis();
 }
 
 void checkColorPresets() 
 {
+  // Serial.println("Checking color Preset");
   if (color_preset == "Cycle")
   {
     EVERY_N_MILLISECONDS(DEFAULT_COLOR_CYCLE_TIME)
@@ -329,7 +387,6 @@ void checkColorPresets()
 
 void checkForMotion()
 {
-
   if (digitalRead(MOTION_PIN))
   {
     if(!motion_flag)
@@ -376,8 +433,9 @@ void setup()
   pinMode(GPIO_RESET, INPUT_PULLUP);
   pinMode(MOTION_PIN, INPUT);
 
-  initWS2812();
   Serial.begin(115200);
+  initWS2812();
+  // initializeColorPalettes();
 
   //------------------------------------------- Declaring Node -----------------------------------------------------//
   Node my_node;
@@ -389,11 +447,11 @@ void setup()
   colorPresets.addUIType(ESP_RMAKER_UI_DROPDOWN);
   ws2812.addParam(colorPresets);
 
-  static const char *colorPallettesMode[] = {"Clouds", "Rainbow", "Rainbow Stripe", "Party", "Ocean", "Lava", "Forest"};
-  Param colorPallettes("Colour Pallettes", ESP_RMAKER_PARAM_MODE, value(DEFAULT_COLOR_PALETTE), PROP_FLAG_READ | PROP_FLAG_WRITE);
-  colorPallettes.addValidStrList(colorPallettesMode, 7);
-  colorPallettes.addUIType(ESP_RMAKER_UI_DROPDOWN);
-  ws2812.addParam(colorPallettes);
+  static const char *colorPalettesMode[] = {"Clouds", "Rainbow", "Rainbow Stripe", "Party", "Ocean", "Lava", "Forest"};
+  Param colorPalettes("Colour Palettes", ESP_RMAKER_PARAM_MODE, value(DEFAULT_COLOR_PALETTE), PROP_FLAG_READ | PROP_FLAG_WRITE);
+  colorPalettes.addValidStrList(colorPalettesMode, 7);
+  colorPalettes.addUIType(ESP_RMAKER_UI_DROPDOWN);
+  ws2812.addParam(colorPalettes);
 
   Param hueParam("Hue", "esp.param.hue", value((int)map(DEFAULT_HUE, 0, 255, 0, 360)), PROP_FLAG_READ | PROP_FLAG_WRITE);
   hueParam.addBounds(value(0), value(360), value(1));
@@ -444,14 +502,6 @@ void setup()
 
 void loop()
 {
-  if (motion_detection)
-  {
-    checkForMotion();
-  }
-  if (night_motion_detection)
-  {
-    checkForNightMotion();
-  }
   if (color_preset != "Custom")
   {
     checkColorPresets();
@@ -461,7 +511,9 @@ void loop()
     Serial.println("Signal Repetition Process");
     changeHSVcolor(appliedHue, appliedSat, appliedVal);
     last_color_change_time = millis();
+    Serial.printf("HEAP SIZE: %zu\n", ESP.getFreeHeap());
   }
   rainmakerResetListener();
-  FastLED.show();
 }
+
+// C:/Users/Thomas Alex/AppData/Local/Temp/arduino-sketch-C4E55FD361A2D9C60CC7B1DE58A423F6/
